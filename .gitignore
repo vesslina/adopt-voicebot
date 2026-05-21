@@ -1,0 +1,13 @@
+venv/
+.env
+.env.local
+.docker-cli/
+Log.txt
+CONTEXT.md
+system/docs/
+__pycache__/
+system/**/__pycache__/
+*.py[cod]
+system/output/phrases/*.wav
+system/models/*.pt
+*.pt.part

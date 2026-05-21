@@ -1,0 +1,10 @@
+venv/
+__pycache__/
+system/**/__pycache__/
+system/output/
+system/models/*.pt
+system/docs/
+CONTEXT.md
+*.pt.part
+.git/
+.env

@@ -1,0 +1,32 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: voicebot-ollama
+    restart: unless-stopped
+    environment:
+      OLLAMA_KEEP_ALIVE: "30m"
+      OLLAMA_LOAD_TIMEOUT: "10m"
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    gpus: all
+
+  voicebot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: voicebot-app
+    restart: unless-stopped
+    depends_on:
+      - ollama
+    env_file:
+      - .env.docker
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./system/models:/app/system/models
+      - ./system/output:/app/system/output
+
+volumes:
+  ollama-data:
