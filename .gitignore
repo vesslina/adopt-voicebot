@@ -11,3 +11,4 @@ system/**/__pycache__/
 system/output/phrases/*.wav
 system/models/*.pt
 *.pt.part
+STEP2.md

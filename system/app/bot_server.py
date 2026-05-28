@@ -26,6 +26,10 @@ PROJECT_DIR = os.path.dirname(SYSTEM_DIR)
 MODELS_DIR = os.path.join(SYSTEM_DIR, "models")
 ENV_PATH = os.path.join(PROJECT_DIR, ".env")
 
+# Knowledge base
+KNOWLEDGE_BASE = {}  # dict of relative path -> content
+KNOWLEDGE_BASE_LOADED = False
+
 
 def load_env_file(path):
     """Loads KEY=VALUE pairs from .env without overriding real environment variables."""
@@ -57,6 +61,68 @@ def load_env_file(path):
                 loaded += 1
 
     log.info("Loaded %d settings from %s", loaded, path)
+
+
+# Knowledge base
+KNOWLEDGE_BASE = {}  # dict of relative path -> content
+KNOWLEDGE_BASE_LOADED = False
+
+
+def load_knowledge_base():
+    """Load all .md files from system/knowledge into memory."""
+    global KNOWLEDGE_BASE, KNOWLEDGE_BASE_LOADED
+    if KNOWLEDGE_BASE_LOADED:
+        return
+    knowledge_dir = os.path.join(SYSTEM_DIR, "knowledge")
+    for root, dirs, files in os.walk(knowledge_dir):
+        for file in files:
+            if file.endswith(".md"):
+                file_path = os.path.join(root, file)
+                # We want the path relative to the knowledge directory for the key
+                rel_path = os.path.relpath(file_path, knowledge_dir)
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                KNOWLEDGE_BASE[rel_path] = content
+    KNOWLEDGE_BASE_LOADED = True
+    log.info(f"Loaded {len(KNOWLEDGE_BASE)} knowledge base documents.")
+
+
+def get_knowledge_context(query, top_n=2):
+    """Return top_n relevant documents from knowledge base based on keyword matching."""
+    t0 = time.monotonic()
+    if not KNOWLEDGE_BASE_LOADED:
+        load_knowledge_base()
+    # Simple keyword matching: split query into words, remove punctuation, lower case
+    words = set(re.findall(r'\b\w+\b', query.lower()))
+    if not words:
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        log.debug(f"Knowledge base search took {elapsed_ms} ms (empty query)")
+        return ""
+    scores = []
+    for rel_path, content in KNOWLEDGE_BASE.items():
+        # Count how many unique words from the query appear in the content (case-insensitive)
+        content_words = set(re.findall(r'\b\w+\b', content.lower()))
+        common = words & content_words
+        score = len(common)
+        scores.append((score, rel_path, content))
+    # Sort by score descending
+    scores.sort(key=lambda x: x[0], reverse=True)
+    # Take top_n
+    top_docs = scores[:top_n]
+    # Filter out zero scores
+    top_docs = [doc for doc in top_docs if doc[0] > 0]
+    if not top_docs:
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        log.debug(f"Knowledge base search took {elapsed_ms} ms (no matches)")
+        return ""
+    # Build the context string
+    context_parts = []
+    for score, rel_path, content in top_docs:
+        context_parts.append(f"--- Из документа: {rel_path} ---\n{content}")
+    result = "\n\n".join(context_parts)
+    elapsed_ms = int((time.monotonic() - t0) * 1000)
+    log.debug(f"Knowledge base search took {elapsed_ms} ms")
+    return result
 
 
 load_env_file(ENV_PATH)
@@ -241,8 +307,17 @@ def transcribe(whisper_model, pcm_bytes):
     return text, elapsed_ms
 
 
-def ask_llm(text, history):
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+def ask_llm(text, history, caller_id):
+    # Build system message with base prompt, knowledge context, and customer context
+    system_parts = [SYSTEM_PROMPT]
+    knowledge_context = get_knowledge_context(text)
+    if knowledge_context:
+        system_parts.append(knowledge_context)
+    customer_context_dict = build_customer_context(caller_id)
+    system_parts.append(customer_context_dict["content"])
+    system_message = "\n\n".join(system_parts)
+
+    messages = [{"role": "system", "content": system_message}]
     messages.extend(history)
     messages.append({"role": "user", "content": text})
     t0 = time.monotonic()
@@ -369,6 +444,58 @@ def internet_help_sentence(contract_id, customer):
     if balance < 0:
         return f"По договору {contract_id} задолженность {abs(balance):.0f} рублей. Сначала пополните баланс, после этого интернет должен включиться автоматически."
     return "Баланс положительный, ограничений по оплате не вижу. Проверьте питание роутера, перезагрузите его на 30 секунд и убедитесь, что Ethernet-кабель плотно вставлен."
+
+
+# Tool calling stubs for external systems (TODO: replace with real API calls)
+def get_balance(contract_id):
+    """
+    Get balance for a contract.
+    TODO: заменить на реальный API/запрос к БД
+    """
+    customer = MOCK_CUSTOMERS.get(contract_id)
+    if customer:
+        return {"balance": customer["balance"], "currency": "RUB"}
+    return {"balance": 0, "currency": "RUB"}
+
+
+def get_request_status(contract_id):
+    """
+    Get status of a request/ticket for a contract.
+    TODO: заменить на реальный API/запрос к БД
+    """
+    customer = MOCK_CUSTOMERS.get(contract_id)
+    if customer:
+        return {"status": customer["request_status"]}
+    return {"status": "заявок не найдено"}
+
+
+def get_subscriber_info(phone_number):
+    """
+    Get subscriber info by phone number.
+    TODO: заменить на реальный API/запрос к БД (Worknet API)
+    """
+    # Reverse lookup: find contract_id by phone number in demo data
+    for caller_id, contract_id in CALLER_TO_CONTRACT.items():
+        if MOCK_CUSTOMERS.get(contract_id, {}).get("phone") == phone_number:
+            customer = MOCK_CUSTOMERS.get(contract_id)
+            if customer:
+                return {
+                    "name": customer["name"],
+                    "address": customer["address"],
+                    "contract_id": contract_id,
+                    "tariff": customer["tariff"]
+                }
+    return {}
+
+
+def transfer_to_human(reason):
+    """
+    Transfer call to human operator.
+    TODO: заменить на реальную интеграцию с Asterisk
+    """
+    # This would trigger an Asterisk transfer in a real implementation
+    log.info(f"Transferring to human operator. Reason: {reason}")
+    return None
 
 
 def try_business_reply(text, caller_id):
@@ -761,7 +888,7 @@ def handle_call(conn, addr, vad_model, whisper_model, tts_model):
                                             log.info("    → LLM...")
                                             contract_id, customer = get_customer_for_caller(call_context["caller_id"])
                                             llm_history = [build_customer_context(call_context["caller_id"])] + history
-                                            reply, llm_ms = ask_llm(text, llm_history)
+                                            reply, llm_ms = ask_llm(text, llm_history, call_context["caller_id"])
                                             reply = strip_repeated_customer_name(reply, customer)
                                             log.info("LLM [%d мс]: \"%s\"", llm_ms, reply)
 
@@ -834,6 +961,10 @@ def main():
     log.info("Прогрев TTS-голоса %s...", TTS_SPEAKER)
     _, warm_tts_ms = synthesize(tts_model, "Здравствуйте.")
     log.info("TTS прогрет за %d мс", warm_tts_ms)
+
+    # Load knowledge base
+    log.info("Loading knowledge base...")
+    load_knowledge_base()
 
     log.info("Проверка Ollama...")
     try:
