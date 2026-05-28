@@ -109,7 +109,18 @@ Linux-сервер
    │  ├─ test_tts_voices.py
    │  └─ vad_server.py
    ├─ models/
-   └─ output/
+   ├─ output/
+   └─ knowledge/
+      ├── tariffs/
+      ├── domashny-plus.md
+      └── biznes-standart.md
+       services/
+      ├── wireless.md
+      └── cameras.md
+      faq/
+      ├── no-internet.md
+      └── payment-methods.md
+      index.md
 ```
 
 Папки `system/models` и `system/output` не коммитятся. Локальные `.pt`-модели, WAV-файлы, Ollama-модели, `.env`, `venv` и внутренние заметки исключены из Git.
